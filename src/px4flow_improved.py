@@ -157,6 +157,20 @@ def _parab(sad, axis_idx, center_idx):
     return float(np.clip(d, -0.5, 0.5))
 
 
+def _peak_curv(vol, bi):
+    """Кривизна (2-я разность) минимума SAD по x и y — острота корр. пика.
+    Высокая = чёткий пик (надёжная локализация); низкая = плоский пик
+    (motion blur / слабая текстура). Замерено: резкая ~1400, блюр σ=2 ~195."""
+    y, x = bi
+    acc = 0.0
+    n = 0
+    if 0 < x < vol.shape[1] - 1:
+        acc += vol[y, x - 1] - 2 * vol[y, x] + vol[y, x + 1]; n += 1
+    if 0 < y < vol.shape[0] - 1:
+        acc += vol[y - 1, x] - 2 * vol[y, x] + vol[y + 1, x]; n += 1
+    return acc / n if n else 0.0
+
+
 def compute_flow_improved(image1, image2,
                           search_size=4,
                           flow_feature_threshold=30,
@@ -168,11 +182,13 @@ def compute_flow_improved(image1, image2,
                           use_census=False,
                           use_pyramid=False,
                           use_boundary_reject=False,
+                          use_peak_quality=False,
                           uniqueness_ratio=1.25,
                           fb_tol=1.0,
                           census_eps=6,
                           census_value_threshold=140,
-                          pyr_refine=2):
+                          pyr_refine=2,
+                          peak_curv_ref=400.0):
     h, w = image1.shape
     positions = _block_positions(w, search_size)
     img1 = image1.astype(np.int32)
@@ -198,6 +214,7 @@ def compute_flow_improved(image1, image2,
         h2p = np.pad(_downsample2(img2), padh, mode="edge")
 
     fxs, fys = [], []
+    curvs = []
 
     for (off_x, off_y) in positions:
         if _compute_diff(image1, off_x, off_y) < flow_feature_threshold:
@@ -228,6 +245,8 @@ def compute_flow_improved(image1, image2,
             sub_x = _parab(sad[bi[0], :], 1, bi[1])
             fxs.append(best_dx + sub_x)
             fys.append(best_dy + sub_y)
+            if use_peak_quality:
+                curvs.append(_peak_curv(sad, bi))
             continue
 
         if use_census:
@@ -289,6 +308,8 @@ def compute_flow_improved(image1, image2,
 
         fxs.append(best_dx + sub_x)
         fys.append(best_dy + sub_y)
+        if use_peak_quality:
+            curvs.append(_peak_curv(sad, bi))
 
     meancount = len(fxs)
     if meancount <= 10:
@@ -302,6 +323,13 @@ def compute_flow_improved(image1, image2,
         flow_y = float(np.mean(fys))
 
     quality = min(int(meancount * 255 / (NUM_BLOCKS * NUM_BLOCKS)), 255)
+
+    # motion-blur / плохая локализация: плоский корр. пик (низкая кривизна)
+    # -> понижаем quality пропорционально остроте пика (EKF доверяет меньше)
+    if use_peak_quality and curvs:
+        conf = min(float(np.mean(curvs)) / peak_curv_ref, 1.0)
+        quality = int(quality * conf)
+
     return quality, flow_x, flow_y
 
 
@@ -345,3 +373,16 @@ if __name__ == "__main__":
                                      use_boundary_reject=True)
     assert qb < qr, f"boundary_reject должен ронять quality за диапазоном: {qr}->{qb}"
     print(f"OK boundary: out-of-range quality {qr} -> {qb}")
+
+    # peak_quality: motion blur -> плоский пик -> quality падает (поток не тронут)
+    import cv2
+    from scipy.ndimage import shift as _shift
+    from _paths import REAL_FRAMES
+    sc = np.load(sorted(REAL_FRAMES.glob("*.npy"))[0]).astype(np.float64)
+    sh = _shift(sc, (0, 2.0), order=1, mode="reflect")
+    s1 = sc[16:80, 16:80].astype(np.uint8); s2 = sh[16:80, 16:80].astype(np.uint8)
+    b1 = cv2.GaussianBlur(s1, (0, 0), 2.5); b2 = cv2.GaussianBlur(s2, (0, 0), 2.5)
+    pk = partial(compute_flow_improved, use_median=True, use_parabolic=True, use_peak_quality=True)
+    q_sharp = pk(s1, s2)[0]; q_blur = pk(b1, b2)[0]
+    assert q_blur < q_sharp, f"peak_quality должен ронять quality на блюре: {q_sharp}->{q_blur}"
+    print(f"OK peak_quality: sharp q {q_sharp} -> blur q {q_blur}")
