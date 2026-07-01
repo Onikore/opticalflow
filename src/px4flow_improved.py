@@ -167,6 +167,7 @@ def compute_flow_improved(image1, image2,
                           use_fb_check=False,
                           use_census=False,
                           use_pyramid=False,
+                          use_boundary_reject=False,
                           uniqueness_ratio=1.25,
                           fb_tol=1.0,
                           census_eps=6,
@@ -207,6 +208,10 @@ def compute_flow_improved(image1, image2,
             coarse = _sad_vol_around(h1p, h2p, off_x // 2, off_y // 2,
                                      padh, 0, 0, search_size)
             cb = np.unravel_index(int(np.argmin(coarse)), coarse.shape)
+            # грубый минимум на краю окна -> движение за пределом даже пирамиды
+            if use_boundary_reject and (cb[0] in (0, 2 * search_size) or
+                                        cb[1] in (0, 2 * search_size)):
+                continue
             cdx, cdy = 2 * (cb[1] - search_size), 2 * (cb[0] - search_size)
             # уточнение на полном разрешении вокруг 2*грубого
             sad = _sad_vol_around(i1p, i2p, off_x, off_y, padf,
@@ -236,6 +241,12 @@ def compute_flow_improved(image1, image2,
         best_dy, best_dx = bi[0] + winmin, bi[1] + winmin
 
         if best_dist >= value_threshold:
+            continue
+
+        # минимум на краю окна поиска -> истинный минимум скорее снаружи
+        # (движение за search_size). Иначе — confident garbage (q высокий, врёт).
+        if use_boundary_reject and (abs(best_dx) == search_size or
+                                    abs(best_dy) == search_size):
             continue
 
         # --- imp3: уникальность минимума (anti-aperture) ---
@@ -325,3 +336,12 @@ if __name__ == "__main__":
     assert abs(fx - 7.0) < 1 and abs(fy + 5.0) < 1, \
         "пирамида должна ловить быстрое движение вне ±search_size"
     print(f"OK pyramid: fast (7,-5) -> ({fx:+.2f},{fy:+.2f})")
+
+    # boundary_reject: на движении за search_size quality должен упасть
+    # (честный отказ вместо confident-garbage), а не остаться 255
+    i1, i2 = B.make_pair(3, 8.0, 0.0)   # 8px > search_size=4, без пирамиды
+    qr, _, _ = compute_flow_improved(i1, i2, use_median=True, use_parabolic=True)
+    qb, _, _ = compute_flow_improved(i1, i2, use_median=True, use_parabolic=True,
+                                     use_boundary_reject=True)
+    assert qb < qr, f"boundary_reject должен ронять quality за диапазоном: {qr}->{qb}"
+    print(f"OK boundary: out-of-range quality {qr} -> {qb}")
