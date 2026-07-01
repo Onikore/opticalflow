@@ -72,9 +72,9 @@ OV7725) / выброс-окклюдер — и валидировались на
 
 ### Принятый дефолт
 
-**median + parabolic + pyramid + boundary_reject + MAD** (scoreboard на реальной
-текстуре, `results/scoreboard.png`): clean −32%, шум −46%, яркость −76%, выбросы −79%,
-без регрессий.
+**median + parabolic + tri_subpix + pyramid + boundary_reject + MAD** (scoreboard на реальной
+текстуре, `results/scoreboard.png`): clean **−57%**, шум **−63%**, яркость **−80%**, выбросы
+**−87%** vs оригинал PX4Flow, без регрессий.
 
 | Улучшение | Флаг | Эффект |
 |---|---|---|
