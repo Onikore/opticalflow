@@ -198,6 +198,8 @@ def compute_flow_improved(image1, image2,
                           use_pyramid=False,
                           use_boundary_reject=False,
                           use_peak_quality=False,
+                          use_mad=False,
+                          mad_k=2.0,
                           uniqueness_ratio=1.25,
                           fb_tol=1.0,
                           census_eps=6,
@@ -330,6 +332,20 @@ def compute_flow_improved(image1, image2,
     if meancount <= 10:
         return 0, 0.0, 0.0
 
+    fxs = np.asarray(fxs)
+    fys = np.asarray(fys)
+
+    # MAD-фильтр: выкинуть блоки, отклонившиеся >mad_k·MAD от медианы (шумные/
+    # яркостно-сбитые/окклюдер), затем ре-медиана согласного большинства.
+    # Бьёт шум/яркость, не ломая выбросы (в отличие от взвешивания по кривизне).
+    if use_mad:
+        mx, my = np.median(fxs), np.median(fys)
+        dev = np.hypot(fxs - mx, fys - my)
+        mad = np.median(dev) + 1e-6
+        keep = dev <= mad_k * mad
+        if keep.sum() >= 5:
+            fxs, fys = fxs[keep], fys[keep]
+
     if use_median:
         flow_x = float(np.median(fxs))
         flow_y = float(np.median(fys))
@@ -401,3 +417,9 @@ if __name__ == "__main__":
     q_sharp = pk(s1, s2)[0]; q_blur = pk(b1, b2)[0]
     assert q_blur < q_sharp, f"peak_quality должен ронять quality на блюре: {q_sharp}->{q_blur}"
     print(f"OK peak_quality: sharp q {q_sharp} -> blur q {q_blur}")
+
+    # MAD-фильтр: не ломает нормальное движение (робастный ре-медиан большинства)
+    i1, i2 = B.make_pair(7, 1.3, 0.7)
+    _, fx, fy = compute_flow_improved(i1, i2, use_median=True, use_parabolic=True, use_mad=True)
+    assert abs(fx - 1.3) < 0.5 and abs(fy - 0.7) < 0.5, "MAD не должен ломать нормальное движение"
+    print(f"OK MAD: normal (1.3,0.7) -> ({fx:+.2f},{fy:+.2f})")
