@@ -95,6 +95,21 @@ def _downsample2(img):
     return img[:h, :w].reshape(h // 2, 2, w // 2, 2).mean(axis=(1, 3))
 
 
+def _coarse_vol_zsad(i1p, i2p, off_x, off_y, pad, radius):
+    """Грубый cost-объём на zero-mean SAD (инвариантен к сдвигу яркости).
+    Только для грубой стадии пирамиды: убирает яркостный bias, из-за которого
+    грубый поиск на ½-разрешении выбирал неверный минимум при автоэкспозиции.
+    Точность даёт fine-стадия на обычном SAD."""
+    ref = i1p[off_y + pad:off_y + pad + 8, off_x + pad:off_x + pad + 8].astype(np.float64)
+    ref = ref - ref.mean()
+    sy0, sx0 = off_y + pad - radius, off_x + pad - radius
+    sh = 8 + 2 * radius
+    region = i2p[sy0:sy0 + sh, sx0:sx0 + sh].astype(np.float64)
+    w = np.lib.stride_tricks.sliding_window_view(region, (8, 8))
+    wm = w.mean(axis=(2, 3), keepdims=True)
+    return np.sum(np.abs((w - wm) - ref[None, None, :, :]), axis=(2, 3))
+
+
 def _sad_vol_around(i1p, i2p, off_x, off_y, pad, cdx, cdy, radius):
     """SAD-объём (2r+1)² вокруг предсказанного сдвига (cdx,cdy). i*p — padded."""
     ref = i1p[off_y + pad:off_y + pad + 8, off_x + pad:off_x + pad + 8]
@@ -221,9 +236,9 @@ def compute_flow_improved(image1, image2,
             continue
 
         if use_pyramid:
-            # грубо на половинном разрешении
-            coarse = _sad_vol_around(h1p, h2p, off_x // 2, off_y // 2,
-                                     padh, 0, 0, search_size)
+            # грубо на половинном разрешении (zero-mean SAD -> устойчив к яркости)
+            coarse = _coarse_vol_zsad(h1p, h2p, off_x // 2, off_y // 2,
+                                      padh, search_size)
             cb = np.unravel_index(int(np.argmin(coarse)), coarse.shape)
             # грубый минимум на краю окна -> движение за пределом даже пирамиды
             if use_boundary_reject and (cb[0] in (0, 2 * search_size) or
