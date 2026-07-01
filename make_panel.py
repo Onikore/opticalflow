@@ -22,17 +22,19 @@ from px4flow_fast import compute_flow_fast
 from px4flow_improved import compute_flow_improved as C
 
 W = 96          # рабочее разрешение потока
-PANEL = 300     # размер панели для показа
+PANEL = 260     # размер панели для показа
 HEAD = 34       # высота заголовка
 TRAJ_SCALE = 1.0
 
+_ACC = dict(use_median=True, use_parabolic=True)   # принятый набор
 VARIANTS = [
-    ("Original (SAD, mean)", compute_flow_fast),
+    ("Original (SAD,mean)", compute_flow_fast),
     ("+ median", partial(C, use_median=True)),
-    ("+ median + parabolic", partial(C, use_median=True, use_parabolic=True)),
-    ("+ census (eps=10)", partial(C, use_median=True, use_parabolic=True,
-                                  use_census=True, census_eps=10,
-                                  census_value_threshold=320)),
+    ("+ median+parabolic", partial(C, **_ACC)),
+    ("+ pyramid", partial(C, use_median=True, use_pyramid=True)),
+    ("+ census(eps10)", partial(C, **_ACC, use_census=True, census_eps=10,
+                                census_value_threshold=320)),
+    ("+ uniqueness", partial(C, **_ACC, use_uniqueness=True)),
 ]
 
 
@@ -117,4 +119,5 @@ def main(path, out="algo_panel.mp4"):
 
 if __name__ == "__main__":
     src = sys.argv[1] if len(sys.argv) > 1 else "IMG_1252.MOV"
-    main(src)
+    out = sys.argv[2] if len(sys.argv) > 2 else "algo_panel.mp4"
+    main(src, out)
