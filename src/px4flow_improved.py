@@ -181,6 +181,22 @@ def _parab(sad, axis_idx, center_idx):
     return float(np.clip(d, -0.5, 0.5))
 
 
+# pixel-locking: SAD+парабола сжимает субпиксель к целым (истина 0.3 -> оценка ~0.1).
+# LUT ниже калиброван на СИНТЕТИЧЕСКОМ bilinear-сдвиге (scipy).
+# ⚠️ ВАЖНО: на синтетике коррекция даёт −70% (clean), но на РЕАЛЬНОМ баге ХУЖЕ (+29%):
+# LUT переобучен под артефакт bilinear-генерации, реальная камера имеет другую
+# субпиксельную статистику + шум/смаз. НЕ включать без РЕ-КАЛИБРОВКИ LUT на парах
+# кадров реальной камеры. Флаг оставлен для такой калибровки, по умолчанию OFF.
+# Урок: синтетический выигрыш ≠ реальный (см. docs/EXPERIMENTS.md).
+_PLK_MEAS = np.array([-0.33, -0.23, -0.12, -0.064, -0.021, 0.011, 0.049, 0.099, 0.20, 0.28])
+_PLK_TRUE = np.array([-0.45, -0.40, -0.30, -0.20, -0.05, 0.05, 0.20, 0.30, 0.40, 0.45])
+
+
+def _correct_subpix(s):
+    """Инверсия pixel-locking по калиброванному LUT (монотонно, клип к ±0.5)."""
+    return float(np.clip(np.interp(s, _PLK_MEAS, _PLK_TRUE), -0.5, 0.5))
+
+
 def _peak_curv(vol, bi):
     """Кривизна (2-я разность) минимума SAD по x и y — острота корр. пика.
     Высокая = чёткий пик (надёжная локализация); низкая = плоский пик
@@ -211,6 +227,7 @@ def compute_flow_improved(image1, image2,
                           mad_k=2.0,
                           use_highpass=False,
                           hp_kernel=13,
+                          use_subpix_correction=False,
                           uniqueness_ratio=1.25,
                           fb_tol=1.0,
                           census_eps=6,
@@ -276,6 +293,8 @@ def compute_flow_improved(image1, image2,
             # с пирамидой не комбинируем (отдельные эксперименты)
             sub_y = _parab(sad[:, bi[1]], 0, bi[0])
             sub_x = _parab(sad[bi[0], :], 1, bi[1])
+            if use_subpix_correction:
+                sub_x, sub_y = _correct_subpix(sub_x), _correct_subpix(sub_y)
             fxs.append(best_dx + sub_x)
             fys.append(best_dy + sub_y)
             if use_peak_quality:
@@ -339,6 +358,8 @@ def compute_flow_improved(image1, image2,
                                           off_x + best_dx, off_y + best_dy,
                                           best_dist)
 
+        if use_subpix_correction:
+            sub_x, sub_y = _correct_subpix(sub_x), _correct_subpix(sub_y)
         fxs.append(best_dx + sub_x)
         fys.append(best_dy + sub_y)
         if use_peak_quality:
@@ -447,3 +468,10 @@ if __name__ == "__main__":
     assert abs(hp_bright["rmse"] - hp_clean["rmse"]) < 0.1, \
         "high-pass должен убирать разницу яркости (bright ≈ clean)"
     print(f"OK highpass: bright RMSE {hp_bright['rmse']:.3f} ≈ clean {hp_clean['rmse']:.3f}")
+
+    # subpix correction: убирает pixel-locking -> резкое падение clean-ошибки
+    base_c = B.run_scenario(partial(compute_flow_improved, use_median=True, use_parabolic=True))
+    corr_c = B.run_scenario(partial(compute_flow_improved, use_median=True, use_parabolic=True,
+                                    use_subpix_correction=True))
+    assert corr_c["rmse"] < base_c["rmse"], "коррекция субпикселя должна снижать clean-ошибку"
+    print(f"OK subpix: clean RMSE {base_c['rmse']:.3f} -> {corr_c['rmse']:.3f}")
