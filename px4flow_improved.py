@@ -167,7 +167,7 @@ def compute_flow_improved(image1, image2,
                           use_fb_check=False,
                           use_census=False,
                           use_pyramid=False,
-                          uniqueness_ratio=0.7,
+                          uniqueness_ratio=1.25,
                           fb_tol=1.0,
                           census_eps=6,
                           census_value_threshold=140,
@@ -239,18 +239,16 @@ def compute_flow_improved(image1, image2,
             continue
 
         # --- imp3: уникальность минимума (anti-aperture) ---
+        # peak-ratio: второй минимум (вне 3x3 у лучшего) должен быть заметно
+        # хуже лучшего. У повторяющейся текстуры (полосы/плитка) второй минимум
+        # ≈ лучшему -> блок неоднозначен -> отбросить (иначе confident garbage).
         if use_uniqueness:
-            # второй по величине минимум вне 3x3 окрестности лучшего
             mask = np.ones(sad.shape, dtype=bool)
             y0, x0 = bi
             mask[max(0, y0 - 1):y0 + 2, max(0, x0 - 1):x0 + 2] = False
             others = sad[mask]
-            if others.size:
-                second = int(np.min(others))
-                # если второй минимум почти так же хорош — блок неоднозначен
-                if best_dist > 0 and second <= best_dist / uniqueness_ratio \
-                        and (second - best_dist) < flow_value_threshold * 0.15:
-                    continue
+            if others.size and np.min(others) <= best_dist * uniqueness_ratio:
+                continue
 
         # --- imp2: forward-backward consistency ---
         if use_fb_check:
