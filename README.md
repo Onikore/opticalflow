@@ -40,6 +40,10 @@ docs/      FINDINGS.md, EXPERIMENTS.md, fallback.md (контекст проек
 `px4flow_fast.py` — векторизованная (идентична); `px4flow_improved.py` —
 улучшенный, флаги + self-check (`python3 src/px4flow_improved.py`).
 
+**Интеграция** (`src/`): `flow_to_velocity.py` — поток → скорость центра дрона
+(де-ротация по гиро + lever-arm смещения камеры `−ω×r` + flow→м/с + DroneCAN-поля).
+Коррекции, что не входят в блок-матчинг, но нужны на выходе сенсора для EKF.
+
 **Стенды** (`src/`): `benchmark.py` (RMSE по сценариям), `test_equivalence.py`,
 `synthetic_test.py`, `video_test.py` (реал.текстура + Farneback), `mov_test.py`
 (видео→метры), `rosbag_path.py` (полёт из mcap-бага→траектория), `derotate_test.py`,
