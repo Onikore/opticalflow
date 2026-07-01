@@ -89,6 +89,15 @@ def _census_cost_volume(c1, c2, off_x, off_y, search_size):
     return _POPCNT[x].sum(axis=(2, 3))
 
 
+def _highpass(img, k):
+    """Вычесть локальное среднее (бокс-фильтр) -> инвариантность к сдвигу яркости.
+    Дешёвая альтернатива census для автоэкспозиции: та же польза на яркости, но
+    штраф на шум вдвое меньше (мягкое ядро k~13). Сепарабельный фильтр, быстро."""
+    from scipy.ndimage import uniform_filter
+    g = img.astype(np.float32)
+    return np.clip(g - uniform_filter(g, k) + 128, 0, 255).astype(np.uint8)
+
+
 def _downsample2(img):
     """2x2 box-даунскейл (как на STM32: 4 пикселя -> среднее). Размеры чётные."""
     h, w = img.shape[0] // 2 * 2, img.shape[1] // 2 * 2
@@ -200,12 +209,19 @@ def compute_flow_improved(image1, image2,
                           use_peak_quality=False,
                           use_mad=False,
                           mad_k=2.0,
+                          use_highpass=False,
+                          hp_kernel=13,
                           uniqueness_ratio=1.25,
                           fb_tol=1.0,
                           census_eps=6,
                           census_value_threshold=140,
                           pyr_refine=2,
                           peak_curv_ref=400.0):
+    # high-pass препроцесс (вычесть локальное среднее) -> устойчивость к яркости
+    if use_highpass:
+        image1 = _highpass(image1, hp_kernel)
+        image2 = _highpass(image2, hp_kernel)
+
     h, w = image1.shape
     positions = _block_positions(w, search_size)
     img1 = image1.astype(np.int32)
@@ -423,3 +439,11 @@ if __name__ == "__main__":
     _, fx, fy = compute_flow_improved(i1, i2, use_median=True, use_parabolic=True, use_mad=True)
     assert abs(fx - 1.3) < 0.5 and abs(fy - 0.7) < 0.5, "MAD не должен ломать нормальное движение"
     print(f"OK MAD: normal (1.3,0.7) -> ({fx:+.2f},{fy:+.2f})")
+
+    # high-pass: инвариантность к яркости (bright ~ clean), дешевле census, меньше шум-налог
+    hp = partial(compute_flow_improved, use_median=True, use_parabolic=True, use_highpass=True)
+    hp_clean = B.run_scenario(hp)
+    hp_bright = B.run_scenario(hp, gain=1.12, bias=8.0)
+    assert abs(hp_bright["rmse"] - hp_clean["rmse"]) < 0.1, \
+        "high-pass должен убирать разницу яркости (bright ≈ clean)"
+    print(f"OK highpass: bright RMSE {hp_bright['rmse']:.3f} ≈ clean {hp_clean['rmse']:.3f}")
