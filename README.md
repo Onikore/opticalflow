@@ -165,17 +165,22 @@ high-pass, ни census не нужны, и шумового налога нет.
 - Калибровать под камеру: `flow_feature_threshold` / `flow_value_threshold` (пороги
   по контрасту), фокус в px для DroneCAN-конверсии.
 
-## План C-порта на STM32
+## C-порт на STM32 — референс ГОТОВ
 
-1. `px4flow_algo.py` как референс логики (не `_fast.py`).
-2. Портировать `compute_diff`/`compute_sad_8x8`/`compute_flow` + принятые флаги на C
-   с CMSIS DSP интринсиками (`__USAD8`/`__USADA8`/`__UHADD8`, `core_cmFunc.h`).
-   Медиана/парабола/пирамида/boundary/MAD дёшевы; high-pass = сепарабельный бокс.
-3. Кадр 64×64 = 4 KB, тривиально в 1 MB RAM. Время мерить через `DWT->CYCCNT`.
-4. **Golden-тест**: сверить C побайтово с Python на `data/test_frames/*.npy`
-   (сохраняются в `flow_camera_test.py` клавишей `s`).
-5. DroneCAN: `com.hex.equipment.flow.Measurement`, `flow_integral = atan2(flow_px, focal)`
-   (см. `dronecan_test.py`). Знак не инвертировать.
+**`c/px4flow_ref.c`** — портируемая C-реализация полётного набора (median + pyramid
+zero-mean coarse + tri-subpix + MAD + boundary), целочисленный тракт (int SAD/ZSAD,
+float только субпиксель/агрегация), статические буферы без malloc.
+
+**Приёмка пройдена:** golden-набор из 20 реальных пар полёта
+(`data/test_frames/`, генератор `src/golden.py`) — C совпадает с Python
+**точно** (Δflow=0.00000 px, Δq=0 на всех парах). Проверка: `./run_checks.sh`
+(собирает gcc и сверяет автоматически).
+
+Осталось для STM32: заменить внутренний цикл `sad8x8` на `__USADA8` (4 px/такт),
+подключить DCMI/FIFO-захват, FDCAN (`HAL_FDCAN_*`) + libcanard
+(`flow_integral = atan2(flow_px, focal)`, знак НЕ инвертировать — `dronecan_test.py`),
+и знаковый тест гиро на столе (чистое вращение ⇒ decoded v≈0). Калибровки — в
+`SensorConfig` (`flow_to_velocity.py`). Время мерить `DWT->CYCCNT`.
 
 ## Глубокие отчёты
 
