@@ -119,6 +119,21 @@ def _coarse_vol_zsad(i1p, i2p, off_x, off_y, pad, radius):
     return np.sum(np.abs((w - wm) - ref[None, None, :, :]), axis=(2, 3))
 
 
+def _zsad_vol_around(i1p, i2p, off_x, off_y, pad, cdx, cdy, radius):
+    """Zero-mean SAD объём вокруг предсказанного сдвига — яркостно-устойчивая
+    fine-стадия. Подтверждено на реальном баге: resid 1.09->1.05 (REVIEW.md §5.A).
+    В C — через SAT (integral image): суммы окон O(1), без float."""
+    ref = i1p[off_y + pad:off_y + pad + 8, off_x + pad:off_x + pad + 8].astype(np.float64)
+    ref = ref - ref.mean()
+    sy0 = off_y + pad + cdy - radius
+    sx0 = off_x + pad + cdx - radius
+    sh = 8 + 2 * radius
+    region = i2p[sy0:sy0 + sh, sx0:sx0 + sh].astype(np.float64)
+    w = np.lib.stride_tricks.sliding_window_view(region, (8, 8))
+    wm = w.mean(axis=(2, 3), keepdims=True)
+    return np.sum(np.abs((w - wm) - ref[None, None, :, :]), axis=(2, 3))
+
+
 def _sad_vol_around(i1p, i2p, off_x, off_y, pad, cdx, cdy, radius):
     """SAD-объём (2r+1)² вокруг предсказанного сдвига (cdx,cdy). i*p — padded."""
     ref = i1p[off_y + pad:off_y + pad + 8, off_x + pad:off_x + pad + 8]
@@ -245,6 +260,7 @@ def compute_flow_improved(image1, image2,
                           hp_kernel=13,
                           use_subpix_correction=False,
                           use_tri_subpix=False,
+                          use_zsad_fine=False,
                           uniqueness_ratio=1.25,
                           fb_tol=1.0,
                           census_eps=6,
@@ -298,8 +314,12 @@ def compute_flow_improved(image1, image2,
                 continue
             cdx, cdy = 2 * (cb[1] - search_size), 2 * (cb[0] - search_size)
             # уточнение на полном разрешении вокруг 2*грубого
-            sad = _sad_vol_around(i1p, i2p, off_x, off_y, padf,
-                                  cdx, cdy, pyr_refine)
+            if use_zsad_fine:
+                sad = _zsad_vol_around(i1p, i2p, off_x, off_y, padf,
+                                       cdx, cdy, pyr_refine)
+            else:
+                sad = _sad_vol_around(i1p, i2p, off_x, off_y, padf,
+                                      cdx, cdy, pyr_refine)
             bi = np.unravel_index(int(np.argmin(sad)), sad.shape)
             best_dist = int(sad[bi])
             best_dx = cdx + (bi[1] - pyr_refine)
@@ -503,3 +523,12 @@ if __name__ == "__main__":
                                    use_tri_subpix=True))
     assert tri_c["rmse"] < base_c["rmse"], "triangular субпиксель должен улучшать clean"
     print(f"OK tri_subpix: clean RMSE {base_c['rmse']:.3f} -> {tri_c['rmse']:.3f}")
+
+    # zsad_fine: яркостно-устойчивая fine-стадия пирамиды (bright не хуже, чем без)
+    pyr = partial(compute_flow_improved, use_median=True, use_pyramid=True)
+    pyrz = partial(compute_flow_improved, use_median=True, use_pyramid=True, use_zsad_fine=True)
+    b_pyr = B.run_scenario(pyr, gain=1.12, bias=8.0)
+    b_z = B.run_scenario(pyrz, gain=1.12, bias=8.0)
+    assert b_z["rmse"] <= b_pyr["rmse"] * 1.05, \
+        f"zsad_fine не должен ухудшать bright: {b_pyr['rmse']:.3f}->{b_z['rmse']:.3f}"
+    print(f"OK zsad_fine: bright RMSE {b_pyr['rmse']:.3f} -> {b_z['rmse']:.3f}")

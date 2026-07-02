@@ -21,6 +21,37 @@ gyro=(ωx,ωy,ωz), где ωx,ωy — наклон, ωz — рыскание).
 Скорость камеры = -flow_rate·h. НЕ инвертировать на сенсоре (EKF ждёт эту конвенцию).
 """
 import numpy as np
+from dataclasses import dataclass, field
+
+
+@dataclass
+class SensorConfig:
+    """Все калибровки сенсора в одном месте. Что мерить на собранном дроне:
+
+    focal_px      — фокус в пикселях НА РАБОЧЕМ разрешении потока
+                    (из calib: fx * W_flow / W_native; наш баг: 551.8*96/480≈110).
+    gyro_map      — какая ось гиро соответствует осям потока (x,y,z-индексы в
+                    массиве IMU) — определяется монтажом камеры vs IMU.
+    gyro_sign     — знаки к осям после маппинга. Калибровка на столе: чистое
+                    вращение -> decoded v должно быть ~0 (см. dronecan_test.py);
+                    неверный знак УДВАИВАЕТ вращение вместо гашения.
+    r_cam         — смещение камеры от центра вращения дрона, м, в осях камеры
+                    (lever-arm: v_центр = v_кам − ω×r). Линейкой по месту.
+    h_min/h_max   — валидный диапазон дальномера, м (вне -> quality=0).
+    """
+    focal_px: float = 110.0
+    gyro_map: tuple = (0, 1, 2)
+    gyro_sign: tuple = (1.0, 1.0, 1.0)
+    r_cam: tuple = (0.0, 0.0, 0.0)
+    h_min: float = 0.3
+    h_max: float = 12.0
+
+    def map_gyro(self, gyro_raw):
+        """Сырой вектор IMU -> (ωx,ωy,ωz) в осях потока."""
+        return tuple(self.gyro_sign[i] * gyro_raw[self.gyro_map[i]] for i in range(3))
+
+    def height_valid(self, h):
+        return self.h_min <= h <= self.h_max
 
 
 def derotate(flow_px, gyro_xy, dt, focal_px):
@@ -66,6 +97,16 @@ def flow_to_velocity(flow_px, height, gyro, dt, focal_px, r_cam=(0.0, 0.0, 0.0),
     return v_cam
 
 
+def sensor_output(flow_px, quality, height, gyro_raw, dt, cfg: SensorConfig):
+    """Полный выход сенсора по конфигу: маппинг гиро, гейт высоты, де-ротация,
+    lever-arm. Возвращает (vx, vy, quality) — quality=0 если высота невалидна."""
+    if not cfg.height_valid(height) or dt <= 0:
+        return 0.0, 0.0, 0
+    gyro = cfg.map_gyro(gyro_raw)
+    vx, vy = flow_to_velocity(flow_px, height, gyro, dt, cfg.focal_px, cfg.r_cam)
+    return vx, vy, int(quality)
+
+
 def to_dronecan_fields(flow_px, gyro, dt, focal_px, quality):
     """Поля com.hex.equipment.flow.Measurement (интеграл в рад, БЕЗ инверсии знака).
     EKF сам делит на interval и вычитает rate_gyro_integral. Оси/знак гиро —
@@ -104,3 +145,11 @@ if __name__ == "__main__":
     vx, vy = flow_to_velocity(fpx, h, (0, 0, 0), dt, focal)
     assert abs(vx - v) < 0.05, f"трансляция должна пройти: {vx:.3f} vs {v}"
     print(f"OK translation: +1.5 м/с -> v=({vx:+.3f},{vy:+.3f})")
+
+    # 4) SensorConfig: гейт высоты + маппинг гиро со знаком
+    cfg = SensorConfig(focal_px=focal, gyro_map=(1, 0, 2), gyro_sign=(-1, 1, 1))
+    _, _, q = sensor_output(fpx, 200, 0.1, (0, 0, 0), dt, cfg)   # h ниже h_min
+    assert q == 0, "невалидная высота должна давать quality=0"
+    g = cfg.map_gyro((0.5, 0.2, 0.1))
+    assert g == (-0.2, 0.5, 0.1), f"маппинг гиро неверен: {g}"
+    print(f"OK config: h-гейт (q=0 при h<h_min), gyro map (0.5,0.2,0.1)->{g}")

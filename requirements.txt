@@ -1,0 +1,6 @@
+numpy>=1.26
+opencv-python>=4.8
+scipy>=1.11
+matplotlib>=3.8
+mcap>=1.0           # чтение rosbag2 (.mcap) без ROS
+mcap-ros2-support>=0.5

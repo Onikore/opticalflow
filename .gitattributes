@@ -1,0 +1,5 @@
+*.mp4 binary
+*.MOV binary
+*.npz binary
+*.npy binary
+*.png binary
