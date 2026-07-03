@@ -18,7 +18,7 @@ from functools import partial
 import cv2
 import numpy as np
 
-from _paths import VIDEOS, RESULTS
+from _paths import VIDEOS, RESULTS_FLOW as RESULTS
 
 from px4flow_fast import compute_flow_fast
 from px4flow_improved import compute_flow_improved as C

@@ -13,7 +13,7 @@ envelope_test.py — стенд №5: карта рабочего диапазо
 """
 import glob
 
-from _paths import REAL_FRAMES, RESULTS
+from _paths import REAL_FRAMES, RESULTS_FLOW as RESULTS
 from functools import partial
 
 import numpy as np

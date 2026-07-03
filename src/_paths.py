@@ -9,3 +9,7 @@ REAL_FRAMES = DATA / "real_frames"
 VIDEOS = DATA / "videos"
 RESULTS = ROOT / "results"
 RESULTS.mkdir(exist_ok=True)
+RESULTS_FLOW = RESULTS / "flow"    # ядро optical flow (алгоритм/сенсорика)
+RESULTS_NAV = RESULTS / "nav"      # GNSS-denied навигация (карты/спутник/пути)
+RESULTS_FLOW.mkdir(exist_ok=True)
+RESULTS_NAV.mkdir(exist_ok=True)
