@@ -35,7 +35,7 @@ def reference(i1, i2):
 
 
 def generate(n_per_regime=5):
-    d = np.load(DATA / "bag_flight" / "bag_cache.npz")
+    d = np.load(DATA / "bag_flight" / "bag1_cam_cache.npz")  # ЧИСТАЯ камера (/cam_usb), не дебаг-топик
     imgs, it = d["imgs"], d["img_t"]
     h = np.interp(it, d["rf_t"], d["rf_h"])
     gyro = d["gyro"]
