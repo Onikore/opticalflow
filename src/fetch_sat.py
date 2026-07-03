@@ -82,19 +82,21 @@ def enu_offset(lat0, lon0, lat, lon):
 
 
 # ---------- загрузка и сшивка ----------
-def fetch(url, retries=3):
+def fetch(url, retries=2, timeout=10, verbose_fail=False):
+    err = None
     for k in range(retries):
         try:
             req = urllib.request.Request(url, headers=UA)
-            with urllib.request.urlopen(req, timeout=15) as r:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
                 buf = np.frombuffer(r.read(), np.uint8)
             img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
             if img is not None:
                 return img
         except Exception as e:
-            if k == retries - 1:
-                print(f"  FAIL {url}: {e}")
-            time.sleep(1 + k)
+            err = e
+            time.sleep(0.5 + k)
+    if verbose_fail:
+        print(f"  FAIL {url}: {err}", flush=True)
     return None
 
 
@@ -124,21 +126,43 @@ def grab(provider, lat, lon, radius_m, zoom, out_dir, ref_lat, ref_lon, dry=Fals
         print(f"  пример URL: {ex}")
         return
 
+    # предпроверка сети: один центральный тайл, с немедленным вердиктом
+    u = PROVIDERS[provider]
+    cx, cy = int(xf), int(yf)
+    test_url = (u.format(q=quadkey(cx, cy, zoom)) if provider == "bing"
+                else u.format(x=cx, y=cy, z=zoom))
+    print(f"  предпроверка: {test_url}", flush=True)
+    t0 = time.time()
+    probe = fetch(test_url, verbose_fail=True)
+    if probe is None:
+        print(f"  !! сервер {provider} недоступен ({time.time()-t0:.0f} с) — "
+              f"пропускаю (сеть/блокировка? попробуй другой --provider или VPN)",
+              flush=True)
+        return
+    print(f"  сеть ок ({time.time()-t0:.1f} с/тайл) — качаю {nx*ny} тайлов, "
+          f"~{nx*ny*(0.15+time.time()-t0)/60:.1f} мин", flush=True)
+
     mosaic = np.zeros((ny * TILE, nx * TILE, 3), np.uint8)
-    ok = 0
+    ok = fail = 0
+    t0 = time.time()
     for ty in range(y0t, y1t + 1):
         for tx in range(x0t, x1t + 1):
-            u = PROVIDERS[provider]
             url = (u.format(q=quadkey(tx, ty, zoom)) if provider == "bing"
                    else u.format(x=tx, y=ty, z=zoom))
             img = fetch(url)
             if img is None:
-                continue
-            iy, ix = ty - y0t, tx - x0t
-            mosaic[iy * TILE:(iy + 1) * TILE, ix * TILE:(ix + 1) * TILE] = img
-            ok += 1
+                fail += 1
+            else:
+                iy, ix = ty - y0t, tx - x0t
+                mosaic[iy * TILE:(iy + 1) * TILE,
+                       ix * TILE:(ix + 1) * TILE] = img
+                ok += 1
             time.sleep(0.15)          # вежливая пауза
-    print(f"  скачано {ok}/{nx*ny}")
+        done = (ty - y0t + 1) * nx
+        eta = (time.time() - t0) / done * (nx * ny - done)
+        print(f"  ряд {ty-y0t+1}/{ny}: ok {ok}, fail {fail}, "
+              f"осталось ~{eta/60:.1f} мин", flush=True)
+    print(f"  скачано {ok}/{nx*ny}" + (f" (fail {fail})" if fail else ""))
 
     out_dir.mkdir(parents=True, exist_ok=True)
     base = out_dir / f"{provider}_z{zoom}"
