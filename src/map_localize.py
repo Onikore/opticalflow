@@ -27,6 +27,14 @@ CONF_THR = 0.20     # порог уверенности (калиброван п
                     # на настоящем ортофотоплане перекалибровать по своим данным)
 
 
+def _hp(img, k=21):
+    """High-pass (вычесть локальное среднее) — кросс-сенсорная нормализация:
+    убирает разницу яркости/цвета спутник vs камера, оставляет структуру
+    (дороги, границы полей, здания). Ядро крупнее, чем в потоке (структуры крупные)."""
+    g = img.astype(np.float32)
+    return np.clip(g - cv2.boxFilter(g, -1, (k, k)) + 128, 0, 255).astype(np.uint8)
+
+
 class GeoMap:
     """Карта: растр север-вверх + привязка (origin в локальных метрах, GSD).
     Для реального применения растр = тайл ортофотоплана, origin = его геопривязка
@@ -36,6 +44,23 @@ class GeoMap:
         self.x0, self.y0, self.gsd = x0, y0, gsd
         self.img = np.zeros((int(h_m / gsd), int(w_m / gsd)), np.uint8)
         self.mask = np.zeros_like(self.img)
+
+    @classmethod
+    def from_image(cls, path, x0, y0, gsd, highpass=True):
+        """Подложка из готового снимка (спутниковый тайл/скрин SAS.Planet/GeoTIFF-
+        экспорт): файл + мировые координаты ЛЕВОГО-НИЖНЕГО угла + м/px.
+        highpass=True — кросс-сенсорный препроцесс (вычесть локальное среднее):
+        гасит радиометрическую разницу спутник≠наша камера (сезон/солнце/сенсор);
+        тот же препроцесс применить к живым кадрам (use_highpass в потоке или
+        localize(..., highpass=True))."""
+        img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            raise FileNotFoundError(path)
+        g = cls(x0, y0, img.shape[1] * gsd, img.shape[0] * gsd, gsd)
+        g.img = _hp(img) if highpass else img
+        g.mask = np.full_like(g.img, 255)
+        g.hp = highpass
+        return g
 
     def world2map(self, x, y):
         return (x - self.x0) / self.gsd, (y - self.y0) / self.gsd
@@ -77,6 +102,8 @@ class GeoMap:
     def localize(self, frame, yaw, h_agl, focal_px, prior_xy, search_m=12.0):
         """Абсолютная позиция по карте вокруг прайора (одометрии).
         Возвращает (x, y, confidence) либо None (нет уверенного матча)."""
+        if getattr(self, "hp", False):
+            frame = _hp(frame)          # кросс-сенсорная нормализация как у карты
         tpl = self.make_template(frame, yaw, h_agl, focal_px)
         ts = tpl.shape[0]
         pmx, pmy = self.world2map(*prior_xy)
