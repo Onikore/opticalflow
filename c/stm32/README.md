@@ -19,7 +19,8 @@
 ## Шаги
 
 ```bash
-python3 src/gen_golden_c.py        # -> c/stm32/golden_data.h (генерируется, в git не лежит)
+python3 src/gen_golden_c.py        # только если нужно пересоздать golden_data.h
+                                   # (готовый уже лежит в репо рядом)
 ```
 
 В проект CubeIDE / Makefile добавить 3 файла (HAL не нужен):
