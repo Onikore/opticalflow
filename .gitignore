@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 results/mov_trajectory.npy
 data/sat/
+c/stm32/golden_data.h

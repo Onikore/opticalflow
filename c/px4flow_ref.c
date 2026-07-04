@@ -95,13 +95,43 @@ static uint32_t zsad64_down(const uint16_t *a, const uint16_t *b,
     return acc;
 }
 
-/* ---- fine: обычный SAD uint8 (на STM32 -> __USADA8) ---- */
+/* ---- fine: SAD uint8. Три пути, бит-в-бит одинаковые:
+ *  - PX4FLOW_USE_USADA8:     Cortex-M4/M7 DSP-инструкция (4 px/такт)
+ *  - PX4FLOW_EMULATE_USADA8: та же логика в C — проверить SIMD-путь на ПК
+ *  - иначе: скалярный референс                                        ---- */
+#if defined(PX4FLOW_USE_USADA8)
+static inline uint32_t usada8(uint32_t x, uint32_t y, uint32_t acc) {
+    uint32_t r;
+    __asm__ ("usada8 %0, %1, %2, %3" : "=r"(r) : "r"(x), "r"(y), "r"(acc));
+    return r;
+}
+#elif defined(PX4FLOW_EMULATE_USADA8)
+static inline uint32_t usada8(uint32_t x, uint32_t y, uint32_t acc) {
+    for (int i = 0; i < 4; i++) {
+        int a = (x >> (8*i)) & 0xFF, b = (y >> (8*i)) & 0xFF;
+        acc += (uint32_t)abs(a - b);
+    }
+    return acc;
+}
+#endif
+
 static uint32_t sad8x8(const uint8_t *a, const uint8_t *b,
                        int ax, int ay, int bx, int by) {
     uint32_t acc = 0;
+#if defined(PX4FLOW_USE_USADA8) || defined(PX4FLOW_EMULATE_USADA8)
+    for (int r = 0; r < T; r++) {
+        const uint8_t *pa = a + (ay+r)*PW + ax, *pb = b + (by+r)*PW + bx;
+        uint32_t a0, a1, b0, b1;                /* memcpy = unaligned-safe */
+        memcpy(&a0, pa, 4); memcpy(&a1, pa+4, 4);
+        memcpy(&b0, pb, 4); memcpy(&b1, pb+4, 4);
+        acc = usada8(a0, b0, acc);
+        acc = usada8(a1, b1, acc);
+    }
+#else
     for (int r = 0; r < T; r++)
         for (int c = 0; c < T; c++)
             acc += (uint32_t)abs((int)a[(ay+r)*PW + ax+c] - (int)b[(by+r)*PW + bx+c]);
+#endif
     return acc;
 }
 
@@ -203,7 +233,10 @@ int compute_flow(const uint8_t *img1, const uint8_t *img2,
     return q > 255 ? 255 : q;
 }
 
-/* ---- приёмочный прогон по golden-набору ---- */
+/* ---- приёмочный прогон по golden-набору (ПК). На STM32 этот main не нужен:
+ *      компилировать с -DPX4FLOW_NO_MAIN и звать compute_flow() из своего main
+ *      (см. c/stm32/main_stm32_golden.c). ---- */
+#ifndef PX4FLOW_NO_MAIN
 int main(int argc, char **argv) {
     if (argc < 2) { fprintf(stderr, "usage: %s golden_frames.bin\n", argv[0]); return 1; }
     FILE *f = fopen(argv[1], "rb");
@@ -220,3 +253,4 @@ int main(int argc, char **argv) {
     fclose(f);
     return 0;
 }
+#endif /* PX4FLOW_NO_MAIN */
